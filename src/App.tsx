@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import NewsChatBox from './components/NewsChatBox';
 import { mastraClient } from './services/MastraClient';
 import { Activity, Globe, Zap, Github, ExternalLink } from 'lucide-react';
@@ -10,7 +10,7 @@ function App() {
   useEffect(() => {
     const checkApiStatus = async () => {
       try {
-        const health = await mastraClient.checkHealth();
+        await mastraClient.checkHealth();
         setApiStatus('connected');
         
         // 获取 API 文档
