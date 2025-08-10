@@ -3,8 +3,10 @@
  * 用于调用部署在 Cloudflare Workers 上的新闻摘要 AI Agent
  */
 
-// Mastra Workers API 地址
-const MASTRA_API_BASE = 'https://mastra-agent.liuweiyuan0713.workers.dev';
+// Mastra Workers API 地址 - 支持环境变量配置
+const MASTRA_API_BASE = import.meta.env.VITE_MASTRA_API_BASE || 'https://mastra-agent.liuweiyuan0713.workers.dev';
+const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT || '30000');
+const DEBUG_MODE = import.meta.env.VITE_DEBUG_MODE === 'true';
 
 export interface NewsArticle {
   title: string;
@@ -47,9 +49,38 @@ export interface ChatMessage {
 
 export class MastraClient {
   private baseUrl: string;
+  private timeout: number;
 
-  constructor(baseUrl: string = MASTRA_API_BASE) {
+  constructor(baseUrl: string = MASTRA_API_BASE, timeout: number = API_TIMEOUT) {
     this.baseUrl = baseUrl;
+    this.timeout = timeout;
+    
+    if (DEBUG_MODE) {
+      console.log(`[MastraClient] Initialized with baseUrl: ${this.baseUrl}, timeout: ${this.timeout}ms`);
+    }
+  }
+
+  /**
+   * 创建带超时的 fetch 请求
+   */
+  private async fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`请求超时（${this.timeout}ms），请检查网络连接`);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -57,11 +88,21 @@ export class MastraClient {
    */
   async checkHealth(): Promise<{ status: string; timestamp: string }> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`);
+      if (DEBUG_MODE) {
+        console.log(`[MastraClient] Health check: ${this.baseUrl}/health`);
+      }
+      
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/health`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      return await response.json();
+      const result = await response.json();
+      
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] Health check result:', result);
+      }
+      
+      return result;
     } catch (error) {
       console.error('Health check failed:', error);
       throw new Error('无法连接到 Mastra Workers 服务');
@@ -82,12 +123,22 @@ export class MastraClient {
       if (category) params.append('category', category);
       params.append('maxArticles', maxArticles.toString());
 
-      const response = await fetch(`${this.baseUrl}/api/news?${params}`);
+      const url = `${this.baseUrl}/api/news?${params}`;
+      if (DEBUG_MODE) {
+        console.log(`[MastraClient] Quick news request: ${url}`);
+      }
+
+      const response = await this.fetchWithTimeout(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      return await response.json();
+      const result = await response.json();
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] Quick news result:', result);
+      }
+      
+      return result;
     } catch (error) {
       console.error('Failed to fetch quick news:', error);
       throw new Error('获取新闻失败，请检查网络连接');
@@ -111,24 +162,36 @@ export class MastraClient {
     } = options;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/summarize`, {
+      const url = `${this.baseUrl}/api/summarize`;
+      const body = {
+        category,
+        maxArticles,
+        summaryLength,
+        focusAreas
+      };
+
+      if (DEBUG_MODE) {
+        console.log(`[MastraClient] Detailed analysis request: ${url}`, body);
+      }
+
+      const response = await this.fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          category,
-          maxArticles,
-          summaryLength,
-          focusAreas
-        })
+        body: JSON.stringify(body)
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] Detailed analysis result:', result);
+      }
+
+      return result;
     } catch (error) {
       console.error('Failed to get detailed analysis:', error);
       throw new Error('获取详细分析失败，请稍后重试');
@@ -140,11 +203,22 @@ export class MastraClient {
    */
   async getApiDocs(): Promise<any> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/docs`);
+      const url = `${this.baseUrl}/api/docs`;
+      if (DEBUG_MODE) {
+        console.log(`[MastraClient] API docs request: ${url}`);
+      }
+
+      const response = await this.fetchWithTimeout(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      return await response.json();
+      
+      const result = await response.json();
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] API docs result:', result);
+      }
+      
+      return result;
     } catch (error) {
       console.error('Failed to fetch API docs:', error);
       throw new Error('获取 API 文档失败');
@@ -160,6 +234,10 @@ export class MastraClient {
     suggestedQuestions?: string[];
   }> {
     try {
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] Chat request:', userMessage);
+      }
+
       // 分析用户消息，提取关键词和意图
       const intent = this.analyzeUserIntent(userMessage);
       
@@ -215,11 +293,17 @@ export class MastraClient {
           break;
       }
 
-      return {
+      const result = {
         response,
         newsData,
         suggestedQuestions: this.generateSuggestedQuestions(intent, newsData)
       };
+
+      if (DEBUG_MODE) {
+        console.log('[MastraClient] Chat response:', result);
+      }
+
+      return result;
 
     } catch (error) {
       console.error('Chat with news failed:', error);
@@ -390,6 +474,17 @@ export class MastraClient {
     }
 
     return questions.slice(0, 3);
+  }
+
+  /**
+   * 获取当前配置信息
+   */
+  getConfig(): { baseUrl: string; timeout: number; debugMode: boolean } {
+    return {
+      baseUrl: this.baseUrl,
+      timeout: this.timeout,
+      debugMode: DEBUG_MODE
+    };
   }
 }
 
