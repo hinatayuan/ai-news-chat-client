@@ -239,32 +239,32 @@ export class MastraClient {
       }
 
       // 分析用户消息，提取关键词和意图
-      const intent = this.analyzeUserIntent(userMessage);
+      const intentAnalysis = this.analyzeUserIntent(userMessage);
       
       let newsData: NewsArticle[] = [];
       let response = '';
 
-      switch (intent.type) {
+      switch (intentAnalysis.type) {
         case 'news_request':
           const newsResponse = await this.getQuickNews({
-            category: intent.category,
-            maxArticles: intent.maxArticles || 5
+            category: intentAnalysis.category,
+            maxArticles: intentAnalysis.maxArticles || 5
           });
           
           newsData = newsResponse.data.summaries;
-          response = this.generateNewsResponse(intent, newsResponse.data);
+          response = this.generateNewsResponse(intentAnalysis, newsResponse.data);
           break;
 
         case 'detailed_analysis':
           const analysisResponse = await this.getDetailedAnalysis({
-            category: intent.category,
-            maxArticles: intent.maxArticles || 8,
-            summaryLength: intent.summaryLength || 'medium',
-            focusAreas: intent.focusAreas
+            category: intentAnalysis.category,
+            maxArticles: intentAnalysis.maxArticles || 8,
+            summaryLength: intentAnalysis.summaryLength || 'medium',
+            focusAreas: intentAnalysis.focusAreas
           });
           
           newsData = analysisResponse.data.summaries;
-          response = this.generateAnalysisResponse(intent, analysisResponse.data);
+          response = this.generateAnalysisResponse(intentAnalysis, analysisResponse.data);
           break;
 
         case 'greeting':
@@ -284,7 +284,7 @@ export class MastraClient {
         default:
           // 尝试作为新闻查询处理
           const defaultResponse = await this.getQuickNews({
-            category: intent.keywords.join(' '),
+            category: intentAnalysis.keywords.join(' '),
             maxArticles: 3
           });
           
@@ -296,7 +296,7 @@ export class MastraClient {
       const result = {
         response,
         newsData,
-        suggestedQuestions: this.generateSuggestedQuestions(intent, newsData)
+        suggestedQuestions: this.generateSuggestedQuestions(intentAnalysis, newsData)
       };
 
       if (DEBUG_MODE) {
@@ -416,8 +416,8 @@ export class MastraClient {
   /**
    * 生成新闻响应
    */
-  private generateNewsResponse(intent: any, data: any): string {
-    const categoryText = intent.category ? `${intent.category}领域的` : '';
+  private generateNewsResponse(intentAnalysis: any, data: any): string {
+    const categoryText = intentAnalysis.category ? `${intentAnalysis.category}领域的` : '';
     const count = data.summaries.length;
     
     return `为你找到了 ${count} 条${categoryText}最新新闻：`;
@@ -426,8 +426,8 @@ export class MastraClient {
   /**
    * 生成分析响应
    */
-  private generateAnalysisResponse(intent: any, data: any): string {
-    const categoryText = intent.category ? `${intent.category}领域` : '全领域';
+  private generateAnalysisResponse(intentAnalysis: any, data: any): string {
+    const categoryText = intentAnalysis.category ? `${intentAnalysis.category}领域` : '全领域';
     const insights = data.insights;
     
     let response = `${categoryText}新闻分析报告：\n\n`;
@@ -459,7 +459,7 @@ export class MastraClient {
   /**
    * 生成建议问题
    */
-  private generateSuggestedQuestions(intent: any, newsData: NewsArticle[]): string[] {
+  private generateSuggestedQuestions(intentAnalysis: any, newsData: NewsArticle[]): string[] {
     const questions = [
       '今天还有什么重要新闻？',
       '给我详细分析一下',
