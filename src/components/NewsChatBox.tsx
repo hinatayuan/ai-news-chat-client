@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, AlertCircle, Sparkles, TrendingUp, Clock } from 'lucide-react';
-import { mastraClient, ChatMessage, NewsArticle } from '../services/MastraClient';
+import { mastraClient, ChatMessage } from '../services/MastraClient';
 import NewsCard from './NewsCard';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
