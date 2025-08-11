@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, AlertCircle, Sparkles, TrendingUp, Clock } from 'lucide-react';
-import { mastraClient, ChatMessage } from '../services/MastraClient';
+import { mastraAgentClient, ChatMessage } from '../services/MastraAgentClient';
 import NewsCard from './NewsCard';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,7 +17,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
     {
       id: '1',
       type: 'assistant',
-      content: '你好！我是 AI 新闻助手，可以为你提供最新的新闻摘要和深度分析。你想了解哪方面的新闻呢？',
+      content: '你好！我是 AI 新闻助手，现在支持实时流式响应！我可以为你提供最新的新闻摘要和深度分析。你想了解哪方面的新闻呢？',
       timestamp: new Date()
     }
   ]);
@@ -37,7 +37,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        await mastraClient.checkHealth();
+        await mastraAgentClient.checkHealth();
         setIsConnected(true);
       } catch (error) {
         setIsConnected(false);
@@ -54,15 +54,12 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 处理发送消息
-  const handleSendMessage = async (content?: string) => {
-    const messageContent = content || inputValue.trim();
-    if (!messageContent || isLoading) return;
-
+  // 处理流式发送消息
+  const handleStreamingMessage = async (content: string) => {
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       type: 'user',
-      content: messageContent,
+      content,
       timestamp: new Date()
     };
 
@@ -70,33 +67,75 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
     setInputValue('');
     setIsLoading(true);
 
-    try {
-      const response = await mastraClient.chatWithNews(messageContent);
-      
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        content: response.response,
-        timestamp: new Date(),
-        newsData: response.newsData
-      };
+    // 创建助手消息（流式更新）
+    const assistantMessageId = (Date.now() + 1).toString();
+    const assistantMessage: ChatMessage = {
+      id: assistantMessageId,
+      type: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true
+    };
 
-      setMessages(prev => [...prev, assistantMessage]);
+    setMessages(prev => [...prev, assistantMessage]);
+
+    try {
+      // 使用流式响应
+      const stream = mastraAgentClient.chatWithNewsStream(content);
       
-      if (response.suggestedQuestions) {
-        setSuggestedQuestions(response.suggestedQuestions);
+      for await (const chunk of stream) {
+        setMessages(prev => prev.map(msg => 
+          msg.id === assistantMessageId 
+            ? {
+                ...msg,
+                content: chunk.content,
+                newsData: chunk.newsData,
+                isStreaming: !chunk.done
+              }
+            : msg
+        ));
+
+        if (chunk.done) {
+          // 生成建议问题
+          if (chunk.newsData && chunk.newsData.length > 0) {
+            const categories = [...new Set(chunk.newsData.map(article => article.category))];
+            setSuggestedQuestions([
+              '还有其他相关新闻吗？',
+              '详细分析一下这些新闻',
+              `${categories[0] || '这个'}领域的趋势如何？`
+            ]);
+          } else {
+            setSuggestedQuestions([
+              '今天还有什么重要新闻？',
+              '科技领域最新动态',
+              '商业新闻摘要'
+            ]);
+          }
+        }
       }
     } catch (error) {
-      const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        content: '抱歉，处理你的请求时遇到了问题。请检查网络连接或稍后重试。',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      // 错误处理
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId 
+          ? {
+              ...msg,
+              content: '抱歉，处理请求时出现问题。请检查网络连接或稍后重试。',
+              isStreaming: false
+            }
+          : msg
+      ));
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 处理发送消息
+  const handleSendMessage = async (content?: string) => {
+    const messageContent = content || inputValue.trim();
+    if (!messageContent || isLoading) return;
+
+    // 使用流式响应
+    await handleStreamingMessage(messageContent);
   };
 
   // 处理键盘事件
@@ -112,6 +151,75 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
     handleSendMessage(question);
   };
 
+  // 渲染流式消息效果
+  const renderMessage = (message: ChatMessage) => (
+    <div key={message.id} className={`flex items-start gap-3 ${message.type === 'user' ? 'flex-row-reverse' : ''}`}>
+      {/* 头像 */}
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+        message.type === 'user' 
+          ? 'bg-blue-600 text-white' 
+          : 'bg-gradient-to-br from-purple-500 to-blue-600 text-white'
+      }`}>
+        {message.type === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+      </div>
+
+      {/* 消息内容 */}
+      <div className={`flex-1 max-w-[80%] ${message.type === 'user' ? 'flex flex-col items-end' : ''}`}>
+        <div className={`rounded-2xl px-4 py-3 ${
+          message.type === 'user'
+            ? 'bg-blue-600 text-white ml-auto'
+            : 'bg-gray-100 text-gray-900'
+        }`}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkBreaks]}
+            rehypePlugins={[rehypeHighlight, rehypeRaw]}
+            className={`prose prose-sm max-w-none ${
+              message.type === 'user' ? 'prose-invert' : ''
+            }`}
+          >
+            {message.content}
+          </ReactMarkdown>
+          
+          {/* 流式输入动画 */}
+          {message.isStreaming && (
+            <div className="typing-indicator mt-2">
+              <div className="dot"></div>
+              <div className="dot"></div>
+              <div className="dot"></div>
+            </div>
+          )}
+        </div>
+
+        {/* 新闻数据展示 */}
+        {message.newsData && message.newsData.length > 0 && (
+          <div className="mt-3 space-y-3 w-full">
+            {message.newsData.map((article, index) => (
+              <NewsCard 
+                key={index} 
+                article={article} 
+                compact={message.newsData!.length > 3}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* 时间戳 */}
+        <div className={`text-xs text-gray-500 mt-1 flex items-center gap-1 ${
+          message.type === 'user' ? 'justify-end' : 'justify-start'
+        }`}>
+          <Clock className="w-3 h-3" />
+          {message.timestamp.toLocaleTimeString('zh-CN', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          })}
+          {message.isStreaming && (
+            <span className="ml-1 text-blue-500">正在输入中...</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`flex flex-col bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden ${className}`}>
       {/* 头部状态栏 */}
@@ -122,7 +230,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
           </div>
           <div>
             <h2 className="font-semibold text-lg">AI 新闻助手</h2>
-            <p className="text-blue-100 text-sm">基于 Mastra Workers 和 DeepSeek AI</p>
+            <p className="text-blue-100 text-sm">支持实时流式响应 • Mastra + DeepSeek</p>
           </div>
         </div>
         
@@ -140,61 +248,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 max-h-[500px]">
-        {messages.map((message) => (
-          <div key={message.id} className={`flex items-start gap-3 ${message.type === 'user' ? 'flex-row-reverse' : ''}`}>
-            {/* 头像 */}
-            <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-              message.type === 'user' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gradient-to-br from-purple-500 to-blue-600 text-white'
-            }`}>
-              {message.type === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-            </div>
-
-            {/* 消息内容 */}
-            <div className={`flex-1 max-w-[80%] ${message.type === 'user' ? 'flex flex-col items-end' : ''}`}>
-              <div className={`rounded-2xl px-4 py-3 ${
-                message.type === 'user'
-                  ? 'bg-blue-600 text-white ml-auto'
-                  : 'bg-gray-100 text-gray-900'
-              }`}>
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkBreaks]}
-                  rehypePlugins={[rehypeHighlight, rehypeRaw]}
-                  className={`prose prose-sm max-w-none ${
-                    message.type === 'user' ? 'prose-invert' : ''
-                  }`}
-                >
-                  {message.content}
-                </ReactMarkdown>
-              </div>
-
-              {/* 新闻数据展示 */}
-              {message.newsData && message.newsData.length > 0 && (
-                <div className="mt-3 space-y-3 w-full">
-                  {message.newsData.map((article, index) => (
-                    <NewsCard 
-                      key={index} 
-                      article={article} 
-                      compact={message.newsData!.length > 3}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* 时间戳 */}
-              <div className={`text-xs text-gray-500 mt-1 flex items-center gap-1 ${
-                message.type === 'user' ? 'justify-end' : 'justify-start'
-              }`}>
-                <Clock className="w-3 h-3" />
-                {message.timestamp.toLocaleTimeString('zh-CN', { 
-                  hour: '2-digit', 
-                  minute: '2-digit' 
-                })}
-              </div>
-            </div>
-          </div>
-        ))}
+        {messages.map(renderMessage)}
 
         {/* 加载状态 */}
         {isLoading && (
@@ -205,7 +259,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
             <div className="bg-gray-100 rounded-2xl px-4 py-3">
               <div className="flex items-center gap-2 text-gray-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">正在分析新闻...</span>
+                <span className="text-sm">连接到 Mastra Agent...</span>
               </div>
             </div>
           </div>
@@ -226,7 +280,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
               <button
                 key={index}
                 onClick={() => handleSuggestedQuestionClick(question)}
-                className="px-3 py-1 text-sm bg-blue-50 text-blue-700 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
+                className="px-3 py-1 text-sm bg-blue-50 text-blue-700 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50"
                 disabled={isLoading}
               >
                 {question}
@@ -252,7 +306,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={isConnected ? "输入你的问题，比如：今天有什么科技新闻？" : "等待连接..."}
+              placeholder={isConnected ? "输入你的问题，比如：今天有什么科技新闻？（支持实时流式响应）" : "等待连接..."}
               disabled={!isConnected || isLoading}
               className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
               rows={1}
@@ -274,7 +328,7 @@ const NewsChatBox: React.FC<NewsChatBoxProps> = ({ className = '' }) => {
         </div>
         
         <div className="mt-2 text-xs text-gray-500 text-center">
-          按 Enter 发送消息，Shift + Enter 换行
+          按 Enter 发送消息，Shift + Enter 换行 • 🚀 现在支持实时流式响应！
         </div>
       </div>
     </div>
