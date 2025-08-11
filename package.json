@@ -17,7 +17,8 @@
     "ui",
     "component",
     "deepseek",
-    "cloudflare-workers"
+    "cloudflare-workers",
+    "streaming"
   ],
   "scripts": {
     "dev": "vite",
@@ -35,7 +36,8 @@
     "rehype-highlight": "^7.0.0",
     "rehype-raw": "^7.0.0",
     "date-fns": "^3.0.0",
-    "recharts": "^2.8.0"
+    "recharts": "^2.8.0",
+    "@mastra/client-js": "^1.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.15",
